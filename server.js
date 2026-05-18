@@ -50,6 +50,13 @@ app.get("/", (req, res) => {
     endpoints: {
       transactions: "GET /api/transactions",
       simpleTransactions: "GET /api/transactions/simple",
+      roles: "GET /api/roles",
+      medicines: "GET /api/medicine",
+      produce: "POST /api/medicine/produce",
+      sendDistributor: "POST /api/medicine/send-distributor",
+      receiveDistributor: "POST /api/medicine/receive-distributor",
+      sendApotek: "POST /api/medicine/send-apotek",
+      receiveApotek: "POST /api/medicine/receive-apotek",
     },
   });
 });
@@ -68,5 +75,7 @@ app.listen(PORT, () => {
   console.log(
     `📋 Sederhana:  http://localhost:${PORT}/api/transactions/simple`
   );
+  console.log(`💊 Obat:       http://localhost:${PORT}/api/medicine`);
+  console.log(`👤 Roles:      http://localhost:${PORT}/api/roles`);
   console.log("================================================");
 });
