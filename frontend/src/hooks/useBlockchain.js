@@ -31,6 +31,7 @@ export default function useBlockchain() {
   const [isConnected, setIsConnected] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [chainId, setChainId] = useState(null);
 
   // Alamat-alamat yang tersimpan di contract
   const [ownerAddress, setOwnerAddress] = useState('');
@@ -60,14 +61,16 @@ export default function useBlockchain() {
       const currentAccount = accounts[0].toLowerCase();
 
       const web3Provider = new ethers.providers.Web3Provider(window.ethereum);
+      const network = await web3Provider.getNetwork();
       const web3Signer = web3Provider.getSigner();
       const healthContract = new ethers.Contract(CONTRACT_ADDRESS, HealthChainABI, web3Signer);
+
+      setChainId(network.chainId);
 
       setProvider(web3Provider);
       setSigner(web3Signer);
       setContract(healthContract);
       setAccount(currentAccount);
-      setIsConnected(true);
 
       // Baca alamat-alamat peran dari smart contract
       const owner = (await healthContract.owner()).toLowerCase();
@@ -88,6 +91,8 @@ export default function useBlockchain() {
       } else {
         setRole('unknown');
       }
+
+      setIsConnected(true);
     } catch (err) {
       console.error('Gagal connect wallet:', err);
       setError(err.message || 'Gagal menghubungkan wallet');
@@ -112,9 +117,15 @@ export default function useBlockchain() {
         }
       };
 
+      const handleChainChanged = () => {
+        window.location.reload();
+      };
+
       window.ethereum.on('accountsChanged', handleAccountsChanged);
+      window.ethereum.on('chainChanged', handleChainChanged);
       return () => {
         window.ethereum.removeListener('accountsChanged', handleAccountsChanged);
+        window.ethereum.removeListener('chainChanged', handleChainChanged);
       };
     }
   }, [connectWallet]);
@@ -208,6 +219,8 @@ export default function useBlockchain() {
     isConnected,
     loading,
     error,
+    chainId,
+    contract,
     ownerAddress,
     distributorAddress,
     apotekAddress,

@@ -1,17 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Package, Truck, CheckCircle, Hospital, Search, RefreshCw, Activity, Shield, Store, Wallet, ExternalLink, Loader } from 'lucide-react';
-import { ethers } from 'ethers';
-import { CONTRACT_ABI } from './contract';
+import useBlockchain from './hooks/useBlockchain';
 import './index.css';
 
 const API_BASE = 'http://localhost:3099/api';
 const SEPOLIA_SCAN = 'https://sepolia.etherscan.io';
-
-const ROLES_CONFIG = [
-  { id: 'produsen', label: 'Produsen', icon: <Shield size={18} /> },
-  { id: 'distributor', label: 'Distributor', icon: <Truck size={18} /> },
-  { id: 'apotek', label: 'Apoteker', icon: <Store size={18} /> },
-];
 
 const STATUS_STEPS = [
   { status: 'Diproduksi', label: 'Produksi Pabrik', icon: <Package size={20} /> },
@@ -22,13 +15,23 @@ const STATUS_STEPS = [
 ];
 
 function App() {
-  // Wallet
-  const [wallet, setWallet] = useState({ address: null, provider: null, contract: null, chainId: null });
-  const [connecting, setConnecting] = useState(false);
-
-  // Roles
-  const [roles, setRoles] = useState(null);
-  const [userRole, setUserRole] = useState(null); // 'produsen' | 'distributor' | 'apotek' | 'pemantau'
+  const {
+    account,
+    role: userRole,
+    isConnected,
+    loading: walletLoading,
+    error: walletError,
+    connectWallet,
+    chainId,
+    contract,
+    produksiObat,
+    kirimKeDistributor,
+    terimaOlehDistributor,
+    kirimKeApotek,
+    terimaOlehApotek,
+    lacakObat: lacakObatHook,
+    getMedicineCount
+  } = useBlockchain();
 
   // Data
   const [medicines, setMedicines] = useState([]);
@@ -41,20 +44,23 @@ function App() {
   const [message, setMessage] = useState(null);
 
   // ============================================
-  // Init: fetch roles & config
+  // Init: fetch transactions
   // ============================================
   useEffect(() => {
-    fetchRoles();
     fetchTransactions();
   }, []);
 
-  const fetchRoles = async () => {
-    try {
-      const res = await fetch(`${API_BASE}/roles`);
-      const data = await res.json();
-      if (data.success) setRoles(data);
-    } catch (e) { console.error(e); }
-  };
+  useEffect(() => {
+    if (contract) {
+      loadContractMedicines();
+    }
+  }, [contract]);
+
+  useEffect(() => {
+    if (walletError) {
+      showMessage(walletError, true);
+    }
+  }, [walletError]);
 
   const fetchTransactions = async () => {
     setLoading(true);
@@ -67,66 +73,12 @@ function App() {
   };
 
   // ============================================
-  // MetaMask connection
-  // ============================================
-  const connectWallet = useCallback(async () => {
-    if (!window.ethereum) {
-      showMessage('Install MetaMask terlebih dahulu!', true);
-      return;
-    }
-    setConnecting(true);
-    try {
-      const provider = new ethers.providers.Web3Provider(window.ethereum);
-      const signer = provider.getSigner();
-      const address = await signer.getAddress();
-      const network = await provider.getNetwork();
-      const chainId = network.chainId;
-
-      // Detect role
-      if (roles) {
-        const addrLower = address.toLowerCase();
-        if (addrLower === roles.roles.produsen.toLowerCase()) setUserRole('produsen');
-        else if (addrLower === roles.roles.distributor.toLowerCase()) setUserRole('distributor');
-        else if (addrLower === roles.roles.apotek.toLowerCase()) setUserRole('apotek');
-        else setUserRole('pemantau');
-      }
-
-      // Init contract
-      const contract = new ethers.Contract(roles?.contractAddress, CONTRACT_ABI, signer);
-
-      setWallet({ address, provider, contract, chainId });
-      showMessage(`Connected: ${address.slice(0, 6)}...${address.slice(-4)}`);
-      await loadContractMedicines(contract);
-    } catch (e) {
-      console.error(e);
-      showMessage('Gagal connect wallet: ' + e.message, true);
-    } finally {
-      setConnecting(false);
-    }
-  }, [roles]);
-
-  // Listen for account/chain changes
-  useEffect(() => {
-    if (!window.ethereum) return;
-    const handleAccountsChanged = ([newAddress]) => {
-      if (!newAddress) { setWallet({ address: null, provider: null, contract: null, chainId: null }); setUserRole(null); }
-      else connectWallet();
-    };
-    const handleChainChanged = () => { window.location.reload(); };
-    window.ethereum.on('accountsChanged', handleAccountsChanged);
-    window.ethereum.on('chainChanged', handleChainChanged);
-    return () => {
-      window.ethereum.removeListener('accountsChanged', handleAccountsChanged);
-      window.ethereum.removeListener('chainChanged', handleChainChanged);
-    };
-  }, [connectWallet]);
-
-  // ============================================
   // Contract reads
   // ============================================
-  const loadContractMedicines = async (contract) => {
+  const loadContractMedicines = async () => {
+    if (!contract) return;
     try {
-      const count = Number(await contract.medicineCount());
+      const count = await getMedicineCount();
       const items = [];
       for (let i = 1; i <= count; i++) {
         const m = await contract.medicines(i);
@@ -145,9 +97,9 @@ function App() {
   };
 
   const trackOnChain = async () => {
-    if (!wallet.contract || !medicineId) return;
+    if (!contract || !medicineId) return;
     try {
-      const m = await wallet.contract.lacakObat(Number(medicineId));
+      const m = await lacakObatHook(Number(medicineId));
       setTrackedMedicine({
         id: Number(medicineId),
         nama: m.nama,
@@ -155,7 +107,27 @@ function App() {
         produsen: m.produsen,
         distributor: m.distributor,
         apotek: m.apotek,
-        timestamp: Number(m.timestamp),
+        timestamp: m.timestamp, // string formatted in hook
+      });
+    } catch (e) {
+      setTrackedMedicine(null);
+      showMessage('Obat tidak ditemukan di blockchain', true);
+    }
+  };
+
+  // Track by direct ID (for table row clicks to avoid stale state)
+  const handleTrackById = async (id) => {
+    if (!contract) return;
+    try {
+      const m = await lacakObatHook(Number(id));
+      setTrackedMedicine({
+        id: Number(id),
+        nama: m.nama,
+        status: m.status,
+        produsen: m.produsen,
+        distributor: m.distributor,
+        apotek: m.apotek,
+        timestamp: m.timestamp,
       });
     } catch (e) {
       setTrackedMedicine(null);
@@ -167,14 +139,18 @@ function App() {
   // Contract writes
   // ============================================
   const sendTx = async (action, label) => {
-    if (!wallet.contract) { showMessage('Connect wallet dulu!', true); return; }
+    if (!contract) { showMessage('Connect wallet dulu!', true); return; }
     setTxLoading(true);
     try {
+      // action returns tx and already calls await tx.wait() in the hook
       const tx = await action();
-      showMessage(`Menunggu konfirmasi: ${tx.hash.slice(0, 10)}...`);
-      const receipt = await tx.wait();
-      showMessage(`${label} berhasil! Tx: ${receipt.hash.slice(0, 10)}...`);
-      await loadContractMedicines(wallet.contract);
+      showMessage(`${label} berhasil! Tx: ${tx.hash.slice(0, 10)}...`);
+      
+      // Update UI
+      await loadContractMedicines();
+      if (trackedMedicine || medicineId) {
+         handleTrackById(trackedMedicine?.id || medicineId);
+      }
     } catch (e) {
       if (e.code === 'ACTION_REJECTED') showMessage('Transaksi dibatalkan', true);
       else showMessage('Gagal: ' + (e.reason || e.message), true);
@@ -185,27 +161,27 @@ function App() {
 
   const handleProduce = () => {
     if (!medicineName) { showMessage('Masukkan nama obat!', true); return; }
-    sendTx(() => wallet.contract.produksiObat(medicineName), 'Produksi Obat');
+    sendTx(() => produksiObat(medicineName), 'Produksi Obat');
   };
 
   const handleSendDistributor = () => {
     if (!medicineId) { showMessage('Masukkan ID Obat!', true); return; }
-    sendTx(() => wallet.contract.kirimKeDistributor(Number(medicineId)), 'Kirim ke Distributor');
+    sendTx(() => kirimKeDistributor(Number(medicineId)), 'Kirim ke Distributor');
   };
 
   const handleReceiveDistributor = () => {
     if (!medicineId) { showMessage('Masukkan ID Obat!', true); return; }
-    sendTx(() => wallet.contract.terimaOlehDistributor(Number(medicineId)), 'Terima oleh Distributor');
+    sendTx(() => terimaOlehDistributor(Number(medicineId)), 'Terima oleh Distributor');
   };
 
   const handleSendApotek = () => {
     if (!medicineId) { showMessage('Masukkan ID Obat!', true); return; }
-    sendTx(() => wallet.contract.kirimKeApotek(Number(medicineId)), 'Kirim ke Apotek');
+    sendTx(() => kirimKeApotek(Number(medicineId)), 'Kirim ke Apotek');
   };
 
   const handleReceiveApotek = () => {
     if (!medicineId) { showMessage('Masukkan ID Obat!', true); return; }
-    sendTx(() => wallet.contract.terimaOlehApotek(Number(medicineId)), 'Terima oleh Apotek');
+    sendTx(() => terimaOlehApotek(Number(medicineId)), 'Terima oleh Apotek');
   };
 
   const handleSearch = (e) => {
@@ -231,7 +207,7 @@ function App() {
     return `${s.slice(0, len)}...${s.slice(-4)}`;
   };
 
-  const isSepolia = wallet.chainId === 11155111;
+  const isSepolia = chainId === 11155111n || chainId === 11155111 || chainId === '0xaa36a7';
   const isProdusen = userRole === 'produsen';
   const isDistributor = userRole === 'distributor';
   const isApotek = userRole === 'apotek';
@@ -253,25 +229,24 @@ function App() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
               <Wallet size={20} color="var(--text-muted)" />
-              {wallet.address ? (
+              {isConnected ? (
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-                  <code className="addr-code">{truncate(wallet.address, 8)}</code>
+                  <code className="addr-code">{truncate(account, 8)}</code>
                   {!isSepolia && <span className="badge badge-warning">Wrong Network</span>}
                   {isSepolia && <span className="badge badge-success">Sepolia</span>}
-                  <span className={`badge ${userRole === 'pemantau' ? 'badge-warning' : 'badge-role'}`}>
+                  <span className={`badge ${userRole === 'unknown' ? 'badge-warning' : 'badge-role'}`}>
                     {userRole === 'produsen' && <><Shield size={14} /> Produsen</>}
                     {userRole === 'distributor' && <><Truck size={14} /> Distributor</>}
                     {userRole === 'apotek' && <><Store size={14} /> Apoteker</>}
-                    {userRole === 'pemantau' && 'Pemantau'}
-                    {!userRole && '...'}
+                    {userRole === 'unknown' && 'Pemantau'}
                   </span>
-                  <a href={`${SEPOLIA_SCAN}/address/${wallet.address}`} target="_blank" rel="noreferrer" className="btn btn-ghost" style={{ padding: '0.25rem 0.5rem' }}>
+                  <a href={`${SEPOLIA_SCAN}/address/${account}`} target="_blank" rel="noreferrer" className="btn btn-ghost" style={{ padding: '0.25rem 0.5rem' }}>
                     <ExternalLink size={14} />
                   </a>
                 </div>
               ) : (
-                <button onClick={connectWallet} className="btn btn-primary" disabled={connecting}>
-                  {connecting ? <><Loader className="spinning" size={16} /> Connecting...</> : 'Connect Wallet'}
+                <button onClick={connectWallet} className="btn btn-primary" disabled={walletLoading}>
+                  {walletLoading ? <><Loader className="spinning" size={16} /> Connecting...</> : 'Connect Wallet'}
                 </button>
               )}
             </div>
@@ -300,13 +275,13 @@ function App() {
                 <input type="text" className="input-field" placeholder="Contoh: 1" value={medicineId}
                   onChange={(e) => setMedicineId(e.target.value)} />
               </div>
-              <button type="submit" className="btn btn-primary" style={{ height: '45px' }} disabled={!wallet.contract}>
+              <button type="submit" className="btn btn-primary" style={{ height: '45px' }} disabled={!contract}>
                 <Search size={18} /> Lacak
               </button>
             </form>
 
             {/* Actions */}
-            {wallet.address && (
+            {isConnected && (
               <>
                 <h3 style={{ fontSize: '1rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
                   Tindakan — <span style={{ color: 'var(--primary)', fontWeight: 600 }}>
@@ -333,7 +308,7 @@ function App() {
               </>
             )}
 
-            {wallet.address && isProdusen && (
+            {isConnected && isProdusen && (
               <div className="input-group" style={{ marginTop: '1rem', marginBottom: 0 }}>
                 <label>Nama Obat (untuk produksi)</label>
                 <input type="text" className="input-field" placeholder="Contoh: Paracetamol 500mg"
@@ -373,8 +348,8 @@ function App() {
         <div className="glass-card" style={{ marginBottom: '2rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
             <h2 style={{ fontSize: '1.25rem' }}>Daftar Obat (Blockchain)</h2>
-            {wallet.contract && (
-              <button onClick={() => loadContractMedicines(wallet.contract)} className="btn btn-ghost" style={{ padding: '0.5rem 0.75rem' }}>
+            {contract && (
+              <button onClick={() => loadContractMedicines()} className="btn btn-ghost" style={{ padding: '0.5rem 0.75rem' }}>
                 <RefreshCw size={16} /> Muat Ulang
               </button>
             )}
@@ -394,7 +369,7 @@ function App() {
                 </thead>
                 <tbody>
                   {medicines.map((m) => (
-                    <tr key={m.id} onClick={() => { setMedicineId(String(m.id)); trackOnChain(); }} style={{ cursor: 'pointer' }}>
+                    <tr key={m.id} onClick={() => { setMedicineId(String(m.id)); handleTrackById(m.id); }} style={{ cursor: 'pointer' }}>
                       <td>{m.id}</td>
                       <td>{m.nama}</td>
                       <td><span className="status-badge">{m.status}</span></td>
@@ -407,7 +382,7 @@ function App() {
               </table>
             ) : (
               <p style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
-                {wallet.contract ? 'Belum ada obat di blockchain.' : 'Connect wallet untuk melihat data.'}
+                {contract ? 'Belum ada obat di blockchain.' : 'Connect wallet untuk melihat data.'}
               </p>
             )}
           </div>
