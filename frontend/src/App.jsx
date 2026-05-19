@@ -145,11 +145,11 @@ function App() {
       // action returns tx and already calls await tx.wait() in the hook
       const tx = await action();
       showMessage(`${label} berhasil! Tx: ${tx.hash.slice(0, 10)}...`);
-      
+
       // Update UI
       await loadContractMedicines();
       if (trackedMedicine || medicineId) {
-         handleTrackById(trackedMedicine?.id || medicineId);
+        handleTrackById(trackedMedicine?.id || medicineId);
       }
     } catch (e) {
       if (e.code === 'ACTION_REJECTED') showMessage('Transaksi dibatalkan', true);
@@ -219,7 +219,7 @@ function App() {
         <header style={{ textAlign: 'center', marginBottom: '2rem' }}>
           <h1 style={{ fontSize: '2.5rem', marginBottom: '0.5rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.75rem' }}>
             <Activity color="var(--primary)" size={40} />
-            PharmaChain <span style={{ color: 'var(--primary)' }}>Track & Trace</span>
+            HealthChain <span style={{ color: 'var(--primary)' }}>Track & Trace</span>
           </h1>
           <p style={{ color: 'var(--text-muted)' }}>Dashboard Pelacakan Rantai Pasok Obat Terdesentralisasi</p>
         </header>
@@ -446,7 +446,8 @@ function App() {
         )}
       </div>
 
-      <style dangerouslySetInnerHTML={{__html: `
+      <style dangerouslySetInnerHTML={{
+        __html: `
         .spinning { animation: spin 1s linear infinite; }
         @keyframes spin { 100% { transform: rotate(360deg); } }
         .addr-code { font-family: monospace; font-size: 0.8rem; color: var(--primary); }
